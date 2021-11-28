@@ -1,0 +1,176 @@
+#kubectl create secret generic drupal-mysql-secret --from-literal  MYSQL_ROOT_PASSWORD=root_password --from-literal MYSQL_DATABASE=drupal-database --from-literal MYSQL_USER=root
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: drupal-mysql-pv
+  labels:
+    type: local
+spec:
+  capacity:
+    storage: 5Gi
+  accessModes:
+    - ReadWriteOnce
+  hostPath:
+    path: "/drupal-mysql-data"
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: drupal-mysql-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: drupal-mysql
+  labels:
+    app: drupal-mysql
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: drupal-mysql
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app: drupal-mysql
+    spec:
+      containers:
+      - image: mysql:5.7
+        name: mysql
+        env:
+          # Use secret in real usage
+        - name: MYSQL_ROOT_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: drupal-mysql-secret
+              key:  MYSQL_ROOT_PASSWORD
+        - name: MYSQL_DATABASE
+          valueFrom:
+            secretKeyRef:
+              name: drupal-mysql-secret
+              key:  MYSQL_DATABASE    
+        - name: MYSQL_USER
+          valueFrom:
+            secretKeyRef:
+              name: drupal-mysql-secret
+              key:  MYSQL_USER   
+        ports:
+        - containerPort: 3306
+          name: mysql
+        volumeMounts:
+        - name: drupal-mysql
+          mountPath: /var/lib/mysql
+          subPath: dbdata
+      volumes:
+      - name: drupal-mysql
+        persistentVolumeClaim:
+          claimName: drupal-mysql-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app: drupal-mysql
+  name: drupal-mysql-service
+spec:
+  ports:
+  - port: 3306
+    protocol: TCP
+    targetPort: 3306
+  selector:
+    app: drupal-mysql
+  type: ClusterIP
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: drupal-pv
+  labels:
+    type: local
+spec:
+  capacity:
+    storage: 5Gi
+  accessModes:
+    - ReadWriteOnce
+  hostPath:
+    path: "/drupal-data"
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: drupal-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: drupal
+  labels:
+    app: drupal
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: drupal
+  template:
+    metadata:
+      labels:
+        app: drupal
+    spec:
+      containers:
+      - image: drupal:8.6
+        name: drupal
+        volumeMounts:
+        - name: drupal-pvc
+          mountPath: /var/www/html/modules
+          subPath: modules
+        - name: drupal-pvc
+          mountPath: /var/www/html/profiles
+          subPath: profiles
+        - name: drupal-pvc
+          mountPath: /var/www/html/sites
+          subPath: sites
+        - name: drupal-pvc
+          mountPath: /var/www/html/themes
+          subPath: themes
+      initContainers:
+      - name: init-sites-volume
+        image: drupal:8.6
+        command: [ "/bin/bash", "-c" ]
+        args: [ 'cp -r /var/www/html/sites/ /data/; chown www-data:www-data /data/ -R' ]
+        volumeMounts:
+        - name: drupal-pvc
+          mountPath: /data
+      volumes:
+      - name: drupal-pvc
+        persistentVolumeClaim:
+          claimName: drupal-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: drupal-service
+spec:
+  type: NodePort
+  selector:
+    app: drupal
+  ports:
+      # By default and for convenience, the `targetPort` is set to the same value as the `port` field.
+    - port: 80
+      targetPort: 80
+      # Optional field
+      # By default and for convenience, the Kubernetes control plane will allocate a port from a range (default: 30000-32767)
+      nodePort: 30095
